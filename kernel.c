@@ -111,6 +111,12 @@ void kernel(const char* command) {
     }
 #endif
     
+    log_printf("hellooooo\n");
+    virtual_memory_map(kernel_pagetable, 0, 0, PROC_START_ADDR, PTE_P|PTE_W, NULL);
+    // (Except for the console.)
+    virtual_memory_map(kernel_pagetable,
+                       0xB8000, 0xB8000, PAGESIZE,
+                       PTE_P|PTE_W|PTE_U, NULL);
     // Switch to the first process using run()
     run(&processes[1]);
 }
@@ -121,9 +127,17 @@ void kernel(const char* command) {
 //    This loads the application's code and data into memory, sets its
 //    %rip and %rsp, gives it a stack page, and marks it as runnable.
 
+
+
+x86_64_pagetable* copy_pagetable(x86_64_pagetable *pagetable, int8_t owner) {
+
+
+    return kernel_pagetable;
+}
 void process_setup(pid_t pid, int program_number) {
     process_init(&processes[pid], 0);
-    processes[pid].p_pagetable = kernel_pagetable;
+
+    processes[pid].p_pagetable = copy_pagetable(kernel_pagetable, pid) ;
     ++pageinfo[PAGENUMBER(kernel_pagetable)].refcount;
     int r = program_load(&processes[pid], program_number, NULL);
     assert(r >= 0);
@@ -133,6 +147,8 @@ void process_setup(pid_t pid, int program_number) {
     virtual_memory_map(processes[pid].p_pagetable, stack_page, stack_page,
                        PAGESIZE, PTE_P | PTE_W | PTE_U, NULL);
     processes[pid].p_state = P_RUNNABLE;
+
+    
 }
 
 
