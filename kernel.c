@@ -84,6 +84,7 @@ void memdump_physical(void);
 static void process_setup(pid_t pid, int program_number);
 
 void kernel(const char* command) {
+
     hardware_init();
     pageinfo_init();
     console_clear();
@@ -95,6 +96,9 @@ void kernel(const char* command) {
         processes[i].p_pid = i;
         processes[i].p_state = P_FREE;
     }
+
+    virtual_memory_map(kernel_pagetable, 0, 0, PROC_START_ADDR, PTE_P|PTE_W, NULL);
+    virtual_memory_map(kernel_pagetable, 0xB8000, 0xB8000, PAGESIZE, PTE_P|PTE_W|PTE_U, NULL);
 
 
 #if FORCE_FORK
@@ -112,14 +116,13 @@ void kernel(const char* command) {
 #endif
     
     log_printf("hellooooo\n");
-    virtual_memory_map(kernel_pagetable, 0, 0, PROC_START_ADDR, PTE_P|PTE_W, NULL);
-    // (Except for the console.)
-    virtual_memory_map(kernel_pagetable,
-                       0xB8000, 0xB8000, PAGESIZE,
-                       PTE_P|PTE_W|PTE_U, NULL);
+    // virtual_memory_map(kernel_pagetable, 0, 0, PROC_START_ADDR, PTE_P|PTE_W, NULL);
+    // virtual_memory_map(kernel_pagetable, 0xB8000, 0xB8000, PAGESIZE, PTE_P|PTE_W|PTE_U, NULL);
+
     // Switch to the first process using run()
     run(&processes[1]);
 }
+
 
 
 // process_setup(pid, program_number)
@@ -129,23 +132,100 @@ void kernel(const char* command) {
 
 
 
+size_t getFreePage (int8_t processNow) {
+    
+    for(int pn = 0; pn < NPAGES; pn++){
+        if(pageinfo[pn].refcount < 1 ){
+
+            int isSuccess = assign_physical_page(pn, processNow);
+
+            if (isSuccess == -1) {
+
+                return PAGEADDRESS(pn);
+
+            }
+            else {
+                return -1;
+            }
+        } 
+    } 
+    return -1;
+}
+
+
+int nOfAllocs = 1;
+x86_64_pagetable* allocator() {
+
+    size_t pageNumber = getFreePage(current->p_pid);
+
+    if (pageNumber == NULL) {
+        return NULL;
+    }
+    else {
+
+        x86_64_pagetable* newPageTable = pageNumber;
+        if (nOfAllocs == 1) assign_physical_page(newPageTable, current->p_pid);
+        return newPageTable;
+    }
+
+    
+}
+
+
 x86_64_pagetable* copy_pagetable(x86_64_pagetable *pagetable, int8_t owner) {
 
 
-    return kernel_pagetable;
+    nOfAllocs = 1;      
+    current = &processes[owner];
+    x86_64_pagetable* newPageTable = allocator();
+   
+    memset(newPageTable, NULL, PAGESIZE);
+
+    for (int i = 0; i < MEMSIZE_VIRTUAL; i = i + 4096) { 
+
+        vamapping oldKernelAttributes = virtual_memory_lookup(kernel_pagetable, i);
+
+        if (oldKernelAttributes.pa == -1) return newPageTable;
+
+        if (i < PROC_START_ADDR) {
+
+            nOfAllocs = 1;
+            virtual_memory_map(newPageTable, i, oldKernelAttributes.pa, PAGESIZE, oldKernelAttributes.perm, &allocator);
+    
+        }
+        if ( i >= PROC_START_ADDR) {
+            log_printf("im here");
+            virtual_memory_map(newPageTable, i, oldKernelAttributes.pa, PAGESIZE, PTE_W, &allocator); 
+            log_printf("success\n");
+        }
+
+    }
+    return newPageTable;
+
 }
+
+
 void process_setup(pid_t pid, int program_number) {
     process_init(&processes[pid], 0);
-
+    
     processes[pid].p_pagetable = copy_pagetable(kernel_pagetable, pid) ;
-    ++pageinfo[PAGENUMBER(kernel_pagetable)].refcount;
+    // ++pageinfo[PAGENUMBER(kernel_pagetable)].refcount;
     int r = program_load(&processes[pid], program_number, NULL);
     assert(r >= 0);
-    processes[pid].p_registers.reg_rsp = PROC_START_ADDR + PROC_SIZE * pid;
+
+    // processes[pid].p_registers.reg_rsp = PROC_START_ADDR + PROC_SIZE * pid;
+    // uintptr_t stack_page = processes[pid].p_registers.reg_rsp - PAGESIZE;
+    // assign_physical_page(stack_page, pid);
+    // virtual_memory_map(processes[pid].p_pagetable, stack_page, stack_page, PAGESIZE, PTE_P | PTE_W | PTE_U, &allocator);
+
+   
+    processes[pid].p_registers.reg_rsp = MEMSIZE_VIRTUAL;
     uintptr_t stack_page = processes[pid].p_registers.reg_rsp - PAGESIZE;
-    assign_physical_page(stack_page, pid);
-    virtual_memory_map(processes[pid].p_pagetable, stack_page, stack_page,
-                       PAGESIZE, PTE_P | PTE_W | PTE_U, NULL);
+    // assign_physical_page(stack_page, pid);
+    uintptr_t addr = getFreePage(pid);
+    assign_physical_page(addr, pid);
+    virtual_memory_map(processes[pid].p_pagetable, stack_page, addr, PAGESIZE, PTE_P | PTE_W | PTE_U, &allocator);
+
     processes[pid].p_state = P_RUNNABLE;
 
     
@@ -200,14 +280,14 @@ void exception(x86_64_registers* reg) {
         memshow_virtual_animate();
 
 #if TICK_LIMIT
-	if (ticks == TICK_LIMIT) {
-	  poweroff();
-	}
+    if (ticks == TICK_LIMIT) {
+      poweroff();
+    }
 
-	if (reg->reg_intno == INT_TIMER && ticks % HZ == 0) {
-	  memdump_physical();
-	  memdump_virtual_all();
-	}
+    if (reg->reg_intno == INT_TIMER && ticks % HZ == 0) {
+      memdump_physical();
+      memdump_virtual_all();
+    }
 #endif
     }
 
@@ -232,13 +312,19 @@ void exception(x86_64_registers* reg) {
 
     case INT_SYS_PAGE_ALLOC: {
         uintptr_t addr = current->p_registers.reg_rdi;
-        int r = assign_physical_page(addr, current->p_pid);
-        if (r >= 0) {
-            virtual_memory_map(current->p_pagetable, addr, addr,
-                               PAGESIZE, PTE_P | PTE_W | PTE_U, NULL);
+        uintptr_t myFreePage = getFreePage(current->p_pid);
+        if (myFreePage == NULL) {
+            return;
         }
-        current->p_registers.reg_rax = r;
-        break;
+        else {
+            int r = assign_physical_page(myFreePage, current->p_pid);
+            if (r >= 0) {
+                virtual_memory_map(current->p_pagetable, addr, myFreePage, PAGESIZE, PTE_P | PTE_W | PTE_U, NULL);
+             }
+            current->p_registers.reg_rax = r;
+            break;
+        }
+
     }
 
     case INT_TIMER:
