@@ -1,19 +1,19 @@
 ## COMP0019 CW3 Grade Report
-Report for commit SHA: a8dec693c0d06f7e658b04ceeb3a0903b34573c1
+Report for commit SHA: a08a3ef9ae71968f1017fc22226c61063cad2e3d
 
 ### Output
 
 
     Kernel isolation passed
-    Process isolation failed at tick 0
-    Virtual page allocation failed at tick 500
-    Overlapping address spaces failed at tick 800
+    Process isolation passed
+    Virtual page allocation passed
+    Overlapping address spaces passed
     Fork failed at tick 0
-    Total score: 1/5
+    Total score: 4/5
     
 
 
 ### Marking
 
-Total score: 20 / 100
+Total score: 80 / 100
 
