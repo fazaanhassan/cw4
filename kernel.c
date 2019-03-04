@@ -209,15 +209,8 @@ void process_setup(pid_t pid, int program_number) {
     process_init(&processes[pid], 0);
     
     processes[pid].p_pagetable = copy_pagetable(kernel_pagetable, pid) ;
-    // ++pageinfo[PAGENUMBER(kernel_pagetable)].refcount;
     int r = program_load(&processes[pid], program_number, NULL);
     assert(r >= 0);
-
-    // processes[pid].p_registers.reg_rsp = PROC_START_ADDR + PROC_SIZE * pid;
-    // uintptr_t stack_page = processes[pid].p_registers.reg_rsp - PAGESIZE;
-    // assign_physical_page(stack_page, pid);
-    // virtual_memory_map(processes[pid].p_pagetable, stack_page, stack_page, PAGESIZE, PTE_P | PTE_W | PTE_U, &allocator);
-
    
     processes[pid].p_registers.reg_rsp = MEMSIZE_VIRTUAL;
     uintptr_t stack_page = processes[pid].p_registers.reg_rsp - PAGESIZE;
