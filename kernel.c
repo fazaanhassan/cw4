@@ -131,8 +131,7 @@ void kernel(const char* command) {
 //    %rip and %rsp, gives it a stack page, and marks it as runnable.
 
 
-
-size_t getFreePage (int8_t processNow) {
+size_t findAFreePage (int8_t processNow) {
     
     for(int pn = 0; pn < NPAGES; pn++){
         if(pageinfo[pn].refcount < 1 ){
@@ -140,23 +139,19 @@ size_t getFreePage (int8_t processNow) {
             int isSuccess = assign_physical_page(pn, processNow);
 
             if (isSuccess == -1) {
-
                 return PAGEADDRESS(pn);
-
             }
             else {
                 return -1;
             }
         } 
     } 
-    return -1;
 }
 
 
-int nOfAllocs = 1;
 x86_64_pagetable* allocator() {
 
-    size_t pageNumber = getFreePage(current->p_pid);
+    size_t pageNumber = findAFreePage(current->p_pid);
 
     if (pageNumber == NULL) {
         return NULL;
@@ -164,7 +159,7 @@ x86_64_pagetable* allocator() {
     else {
 
         x86_64_pagetable* newPageTable = pageNumber;
-        if (nOfAllocs == 1) assign_physical_page(newPageTable, current->p_pid);
+        assign_physical_page(newPageTable, current->p_pid);
         return newPageTable;
     }
 
@@ -173,29 +168,32 @@ x86_64_pagetable* allocator() {
 
 
 x86_64_pagetable* copy_pagetable(x86_64_pagetable *pagetable, int8_t owner) {
-
-
-    nOfAllocs = 1;      
+     
     current = &processes[owner];
     x86_64_pagetable* newPageTable = allocator();
-   
-    memset(newPageTable, NULL, PAGESIZE);
+    
+    if (newPageTable == NULL) {
+        return NULL;
+    }
+    else {
+        memset(newPageTable, NULL, PAGESIZE); 
+    }
 
-    for (int i = 0; i < MEMSIZE_VIRTUAL; i = i + 4096) { 
 
-        vamapping oldKernelAttributes = virtual_memory_lookup(kernel_pagetable, i);
+    for (int vMem = 0; vMem < MEMSIZE_VIRTUAL; vMem = vMem + PAGESIZE) { 
+
+        vamapping oldKernelAttributes = virtual_memory_lookup(kernel_pagetable, vMem);
 
         if (oldKernelAttributes.pa == -1) return newPageTable;
 
-        if (i < PROC_START_ADDR) {
+        if (vMem < PROC_START_ADDR) {
 
-            nOfAllocs = 1;
-            virtual_memory_map(newPageTable, i, oldKernelAttributes.pa, PAGESIZE, oldKernelAttributes.perm, &allocator);
+            virtual_memory_map(newPageTable, vMem, oldKernelAttributes.pa, PAGESIZE, oldKernelAttributes.perm, &allocator);
     
         }
-        if ( i >= PROC_START_ADDR) {
+        if ( vMem >= PROC_START_ADDR) {
             log_printf("im here");
-            virtual_memory_map(newPageTable, i, oldKernelAttributes.pa, PAGESIZE, PTE_W, &allocator); 
+            virtual_memory_map(newPageTable, vMem, oldKernelAttributes.pa, PAGESIZE, PTE_W, &allocator); 
             log_printf("success\n");
         }
 
@@ -203,6 +201,15 @@ x86_64_pagetable* copy_pagetable(x86_64_pagetable *pagetable, int8_t owner) {
     return newPageTable;
 
 }
+
+
+
+// process_setup(pid, program_number)
+//    Load application program `program_number` as process number `pid`.
+//    This loads the application's code and data into memory, sets its
+//    %rip and %rsp, gives it a stack page, and marks it as runnable.
+
+
 
 
 void process_setup(pid_t pid, int program_number) {
@@ -215,7 +222,7 @@ void process_setup(pid_t pid, int program_number) {
     processes[pid].p_registers.reg_rsp = MEMSIZE_VIRTUAL;
     uintptr_t stack_page = processes[pid].p_registers.reg_rsp - PAGESIZE;
     // assign_physical_page(stack_page, pid);
-    uintptr_t addr = getFreePage(pid);
+    uintptr_t addr = findAFreePage(pid);
     assign_physical_page(addr, pid);
     virtual_memory_map(processes[pid].p_pagetable, stack_page, addr, PAGESIZE, PTE_P | PTE_W | PTE_U, &allocator);
 
@@ -305,8 +312,8 @@ void exception(x86_64_registers* reg) {
 
     case INT_SYS_PAGE_ALLOC: {
         uintptr_t addr = current->p_registers.reg_rdi;
-        uintptr_t myFreePage = getFreePage(current->p_pid);
-        if (myFreePage == NULL) {
+        uintptr_t myFreePage = findAFreePage(current->p_pid);
+        if (myFreePage == -1) {
             return;
         }
         else {
